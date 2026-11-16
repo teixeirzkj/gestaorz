@@ -45,6 +45,14 @@ export interface Tx {
   recurring?: Recurring
 }
 
+/** Quanto dinheiro havia no começo de um mês (informado pelo usuário). */
+export interface MonthBalance {
+  id: string
+  month: string
+  amount: number
+  created_at: string
+}
+
 /** Marca que a mensalidade de um cliente foi paga em determinado mês. */
 export interface RecPayment {
   id: string

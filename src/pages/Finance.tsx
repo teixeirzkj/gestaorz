@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { ArrowDownRight, ArrowUpRight, Pencil, PiggyBank, Plus, Repeat, Scale, Trash2 } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, Landmark, Pencil, PiggyBank, Plus, Repeat, Scale, Trash2 } from 'lucide-react'
 import { useMemo, useState, type FormEvent } from 'react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { ChartLegend, ChartTip, axisProps, C } from '../components/charts'
@@ -7,8 +7,8 @@ import { KIND_LABEL, RecForm } from '../components/RecForm'
 import { Button, Empty, Field, Kpi, Modal, MonthNav, PageHeader, ease, stagger, useModal } from '../components/ui'
 import { useData } from '../lib/data'
 import { brl, brlShort, currentMonth, fmtDate, lastMonths, monthLabel, monthOf, parseMoney, sum, todayStr } from '../lib/format'
-import { monthTxs, totalReserva } from '../lib/recurring'
-import type { Recurring, Tx, TxKind } from '../lib/types'
+import { monthTxs, openingBalance, totalReserva } from '../lib/recurring'
+import type { MonthBalance, Recurring, Tx, TxKind } from '../lib/types'
 
 const CATEGORIES: Record<TxKind, string[]> = {
   receita: ['Salário', 'Vendas', 'Mensalidade', 'Freelance', 'Comissão', 'Outros'],
@@ -19,8 +19,9 @@ const CATEGORIES: Record<TxKind, string[]> = {
 const of = (rows: Tx[], kind: TxKind) => sum(rows.filter((t) => t.kind === kind), (t) => t.amount)
 
 export default function Finance() {
-  const { txs, recurring } = useData()
+  const { txs, recurring, balances } = useData()
   const reduce = useReducedMotion()
+  const [balanceOpen, setBalanceOpen] = useState(false)
   const [month, setMonth] = useState(currentMonth)
   const modal = useModal<{ tx: Tx | null; kind: TxKind }>()
   const recModal = useModal<Recurring>()
@@ -34,6 +35,11 @@ export default function Finance() {
   const expense = of(inMonth, 'despesa')
   const saved = of(inMonth, 'reserva')
   const left = income - expense - saved
+  const opening = useMemo(
+    () => openingBalance(balances.rows, txs.rows, recurring.rows, month),
+    [balances.rows, txs.rows, recurring.rows, month],
+  )
+  const closing = opening.amount + left
   const totalSaved = useMemo(() => totalReserva(txs.rows, recurring.rows), [txs.rows, recurring.rows])
   const fixedIncome = sum(inMonth.filter((t) => t.recurring && t.kind === 'receita'), (t) => t.amount)
   const fixedExpense = sum(inMonth.filter((t) => t.recurring && t.kind === 'despesa'), (t) => t.amount)
@@ -57,6 +63,9 @@ export default function Finance() {
     <>
       <PageHeader title="Gestão financeira" subtitle="Cadastre seus ganhos e gastos do mês e veja quanto sobra para guardar.">
         <MonthNav value={month} onChange={setMonth} />
+        <Button onClick={() => setBalanceOpen(true)}>
+          <Landmark size={16} aria-hidden /> Saldo inicial
+        </Button>
         <Button onClick={() => modal.show({ tx: null, kind: 'despesa' })}>
           <Plus size={16} aria-hidden /> Gasto
         </Button>
@@ -68,7 +77,20 @@ export default function Finance() {
         </Button>
       </PageHeader>
 
-      <motion.div className="kpis" variants={stagger} initial="hidden" animate="show" key={month}>
+      <motion.div className="kpis kpis-5" variants={stagger} initial="hidden" animate="show" key={month}>
+        <Kpi
+          label="Comecei o mês com"
+          value={brl(opening.amount)}
+          hint={
+            opening.source === 'informado'
+              ? 'Informado por você'
+              : opening.source === 'anterior'
+                ? 'Veio do fim do mês anterior'
+                : 'Clique em “Saldo inicial” para informar'
+          }
+          tone={opening.amount < 0 ? 'danger' : undefined}
+          icon={<Landmark size={18} />}
+        />
         <Kpi label="Ganhos do mês" value={brl(income)} hint={`${brl(fixedIncome)} são fixos`} icon={<ArrowUpRight size={18} />} />
         <Kpi
           label="Gastos do mês"
@@ -78,10 +100,10 @@ export default function Finance() {
         />
         <Kpi label="Guardado na reserva" value={brl(saved)} hint={`Total acumulado: ${brl(totalSaved)}`} icon={<PiggyBank size={18} />} />
         <Kpi
-          label="Sobra no mês"
-          value={brl(left)}
-          hint={left < 0 ? 'Você gastou mais do que ganhou' : 'Ganhos − gastos − reserva'}
-          tone={left < 0 ? 'danger' : undefined}
+          label="Termino o mês com"
+          value={brl(closing)}
+          hint={`Sobra do mês: ${brl(left)}`}
+          tone={closing < 0 ? 'danger' : undefined}
           icon={<Scale size={18} />}
         />
       </motion.div>
@@ -207,12 +229,71 @@ export default function Finance() {
         {modal.data && <TxForm key={modal.nonce} tx={modal.data.tx} kind={modal.data.kind} month={month} onClose={modal.hide} />}
       </Modal>
 
+      <Modal open={balanceOpen} onClose={() => setBalanceOpen(false)} title={`Saldo inicial de ${monthLabel(month).toLowerCase()}`}>
+        <BalanceForm key={month + String(balanceOpen)} month={month} row={opening.row} suggested={opening.amount} onClose={() => setBalanceOpen(false)} />
+      </Modal>
+
       <Modal open={recModal.open} onClose={recModal.hide} title="Lançamento fixo">
         {recModal.data && (
           <RecForm key={recModal.nonce} rec={recModal.data} clientMode={!!recModal.data.client} month={month} onClose={recModal.hide} />
         )}
       </Modal>
     </>
+  )
+}
+
+function BalanceForm({
+  month,
+  row,
+  suggested,
+  onClose,
+}: {
+  month: string
+  row: MonthBalance | null
+  suggested: number
+  onClose: () => void
+}) {
+  const { balances } = useData()
+  const [value, setValue] = useState(suggested ? String(suggested.toFixed(2)).replace('.', ',') : '')
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    const raw = value.trim().replace(/^R\$\s*/, '')
+    const negative = raw.startsWith('-') || raw.startsWith('−')
+    const amount = parseMoney(raw.replace(/^[-−]\s*/, '')) * (negative ? -1 : 1)
+    if (row) balances.update(row.id, { amount })
+    else balances.add({ month, amount })
+    onClose()
+  }
+
+  return (
+    <form className="form" onSubmit={submit}>
+      <p className="muted small">
+        Quanto você tinha no começo deste mês. Pode ser negativo (ex.: -350,00). Os meses seguintes continuam a partir do que sobrar,
+        até você informar outro valor.
+      </p>
+      <Field label="Saldo no começo do mês">
+        <input data-autofocus inputMode="text" value={value} onChange={(e) => setValue(e.target.value)} required placeholder="0,00" />
+      </Field>
+      <div className="form-actions">
+        {row && (
+          <Button
+            variant="danger"
+            className="push-left"
+            onClick={() => {
+              balances.remove(row.id)
+              onClose()
+            }}
+          >
+            <Trash2 size={15} aria-hidden /> Remover
+          </Button>
+        )}
+        <Button onClick={onClose}>Cancelar</Button>
+        <Button type="submit" variant="primary">
+          Salvar
+        </Button>
+      </div>
+    </form>
   )
 }
 

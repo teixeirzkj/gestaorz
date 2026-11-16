@@ -1,5 +1,5 @@
 import { currentMonth, monthOf, shiftMonth } from './format'
-import type { RecPayment, Recurring, Tx } from './types'
+import type { MonthBalance, RecPayment, Recurring, Tx } from './types'
 
 export const activeIn = (r: Recurring, ym: string) => r.start_month <= ym && (!r.end_month || ym <= r.end_month)
 
@@ -25,6 +25,25 @@ export const monthTxs = (txs: Tx[], recs: Recurring[], ym: string): Tx[] => [
   ...txs.filter((t) => monthOf(t.date) === ym),
   ...recs.filter((r) => activeIn(r, ym)).map((r) => occurrence(r, ym)),
 ]
+
+/** Ganhos − gastos − reserva de um mês. */
+export const monthNet = (txs: Tx[], recs: Recurring[], ym: string) =>
+  monthTxs(txs, recs, ym).reduce((acc, t) => acc + (t.kind === 'receita' ? t.amount : -t.amount), 0)
+
+/**
+ * Saldo no começo do mês: o valor informado pelo usuário ou, se não houver,
+ * o saldo final do mês anterior (a partir do último saldo informado).
+ */
+export const openingBalance = (balances: MonthBalance[], txs: Tx[], recs: Recurring[], ym: string) => {
+  const exact = balances.find((b) => b.month === ym)
+  if (exact) return { amount: Number(exact.amount) || 0, source: 'informado' as const, row: exact }
+  const prev = balances.filter((b) => b.month < ym).sort((a, b) => b.month.localeCompare(a.month))[0]
+  if (!prev) return { amount: 0, source: 'vazio' as const, row: null }
+  let amount = Number(prev.amount) || 0
+  let m = prev.month
+  for (let i = 0; i < 240 && m < ym; i++, m = shiftMonth(m, 1)) amount += monthNet(txs, recs, m)
+  return { amount, source: 'anterior' as const, row: null }
+}
 
 export interface Charge {
   rec: Recurring

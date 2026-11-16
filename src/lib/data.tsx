@@ -1,9 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { supabase } from './supabase'
 import { toast } from '../components/ui'
-import type { Card, Column, RecPayment, Recurring, Sale, Tx } from './types'
+import type { Card, Column, MonthBalance, RecPayment, Recurring, Sale, Tx } from './types'
 
-type Table = 'board_columns' | 'cards' | 'sales' | 'transactions' | 'recurring' | 'recurring_payments'
+type Table = 'board_columns' | 'cards' | 'sales' | 'transactions' | 'recurring' | 'recurring_payments' | 'month_balances'
 type Row = { id: string; created_at: string }
 
 const LS = 'gfrz:'
@@ -123,6 +123,7 @@ interface Ctx {
   txs: TableApi<Tx>
   recurring: TableApi<Recurring>
   payments: TableApi<RecPayment>
+  balances: TableApi<MonthBalance>
 }
 
 const DataCtx = createContext<Ctx | null>(null)
@@ -138,12 +139,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [txs, setTxs] = useTable<Tx>('transactions', reload)
   const [recurring, setRecurring] = useTable<Recurring>('recurring', reload)
   const [payments, setPayments] = useTable<RecPayment>('recurring_payments', reload)
+  const [balances, setBalances] = useTable<MonthBalance>('month_balances', reload)
 
   useEffect(() => {
     let alive = true
     ;(async () => {
       try {
-        const [c, k, s, t, r, p] = await Promise.all([
+        const [c, k, s, t, r, p, b] = await Promise.all([
           backend.list<Column>('board_columns'),
           backend.list<Card>('cards'),
           backend.list<Sale>('sales'),
@@ -156,10 +158,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
             toast('Para controlar quem pagou, execute supabase/003_pagamentos.sql no Supabase.')
             return [] as RecPayment[]
           }),
+          backend.list<MonthBalance>('month_balances').catch(() => {
+            toast('Para usar o saldo inicial do mês, execute supabase/004_saldo_inicial.sql no Supabase.')
+            return [] as MonthBalance[]
+          }),
         ])
         if (alive) {
           setRecurring(r)
           setPayments(p)
+          setBalances(b)
         }
         const cols = c.length ? c : await seedColumns()
         if (!alive) return
@@ -176,11 +183,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return () => {
       alive = false
     }
-  }, [tick, setColumns, setCards, setSales, setTxs, setRecurring, setPayments])
+  }, [tick, setColumns, setCards, setSales, setTxs, setRecurring, setPayments, setBalances])
 
   const value = useMemo(
-    () => ({ loading, columns, cards, sales, txs, recurring, payments }),
-    [loading, columns, cards, sales, txs, recurring, payments],
+    () => ({ loading, columns, cards, sales, txs, recurring, payments, balances }),
+    [loading, columns, cards, sales, txs, recurring, payments, balances],
   )
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>
 }

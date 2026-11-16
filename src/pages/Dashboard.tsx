@@ -5,11 +5,11 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, Res
 import { C, ChartLegend, ChartTip, axisProps } from '../components/charts'
 import { Button, Empty, Kpi, PageHeader, rise, stagger } from '../components/ui'
 import { useData } from '../lib/data'
-import { monthTxs, pendingCharges, totalReserva } from '../lib/recurring'
+import { monthTxs, openingBalance, pendingCharges, totalReserva } from '../lib/recurring'
 import { brl, brlShort, currentMonth, dueState, fmtDate, lastMonths, monthLabel, monthOf, sum, todayStr } from '../lib/format'
 
 export default function Dashboard() {
-  const { columns, cards, sales, txs, recurring, payments } = useData()
+  const { columns, cards, sales, txs, recurring, payments, balances } = useData()
   const reduce = useReducedMotion()
   const month = currentMonth()
   const today = todayStr()
@@ -28,10 +28,11 @@ export default function Dashboard() {
       paidCount: paid.length,
       receivable: sum(pending, (s) => s.amount),
       pendingCount: pending.length,
-      left: of('receita') - of('despesa') - of('reserva'),
+      left:
+        openingBalance(balances.rows, txs.rows, recurring.rows, month).amount + of('receita') - of('despesa') - of('reserva'),
       saved: totalReserva(txs.rows, recurring.rows),
     }
-  }, [sales.rows, txs.rows, recurring.rows, month])
+  }, [sales.rows, txs.rows, recurring.rows, balances.rows, month])
 
   const months = useMemo(() => lastMonths(6), [])
 
@@ -86,7 +87,7 @@ export default function Dashboard() {
         <Kpi label="Lucro das vendas" value={brl(stats.profit)} hint="Recebido menos custos" icon={<TrendingUp size={18} />} />
         <Kpi label="A receber" value={brl(stats.receivable)} hint={`${stats.pendingCount} venda(s) pendente(s)`} icon={<Clock size={18} />} />
         <Kpi
-          label="Sobra no mês"
+          label="Termino o mês com"
           value={brl(stats.left)}
           hint={`Reserva acumulada: ${brl(stats.saved)}`}
           tone={stats.left < 0 ? 'danger' : undefined}
