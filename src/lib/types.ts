@@ -45,6 +45,15 @@ export interface Tx {
   recurring?: Recurring
 }
 
+/** Marca que a mensalidade de um cliente foi paga em determinado mês. */
+export interface RecPayment {
+  id: string
+  recurring_id: string
+  month: string
+  paid_at: string
+  created_at: string
+}
+
 /** Lançamento fixo que se repete todo mês (salário, parcela, mensalidade de cliente). */
 export interface Recurring {
   id: string

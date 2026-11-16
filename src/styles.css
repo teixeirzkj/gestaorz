@@ -1133,3 +1133,7 @@ textarea:focus {
     transition-duration: 0.01ms !important;
   }
 }
+
+.panel-alert {
+  border-color: rgba(248, 113, 113, 0.45);
+}

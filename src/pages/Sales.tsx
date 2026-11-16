@@ -5,7 +5,7 @@ import { RecForm } from '../components/RecForm'
 import { Button, Empty, Field, Kpi, Modal, MonthNav, PageHeader, ease, stagger, useModal } from '../components/ui'
 import { useData } from '../lib/data'
 import { brl, currentMonth, fmtDate, monthOf, parseMoney, shiftMonth, sum, todayStr } from '../lib/format'
-import { activeIn } from '../lib/recurring'
+import { activeIn, occurrence } from '../lib/recurring'
 import type { Recurring, Sale, SaleStatus } from '../lib/types'
 
 const STATUS_LABEL: Record<SaleStatus, string> = { pendente: 'Pendente', paga: 'Paga', perdida: 'Perdida' }
@@ -17,7 +17,8 @@ const FILTERS: { id: SaleStatus | 'todas'; label: string }[] = [
 ]
 
 export default function Sales() {
-  const { sales, recurring } = useData()
+  const { sales, recurring, payments } = useData()
+  const today = todayStr()
   const [month, setMonth] = useState(currentMonth)
   const [filter, setFilter] = useState<SaleStatus | 'todas'>('todas')
   const modal = useModal<Sale | null>()
@@ -28,6 +29,14 @@ export default function Sales() {
     [recurring.rows, month],
   )
   const mrr = sum(subs, (r) => r.amount)
+  const subRows = subs.map((r) => {
+    const date = occurrence(r, month).date
+    const pay = payments.rows.find((p) => p.recurring_id === r.id && p.month === month)
+    const state = pay ? 'paid' : date < today ? 'overdue' : date === today ? 'today' : 'ok'
+    return { r, date, pay, state } as const
+  })
+  const subsPaid = sum(subRows.filter((s) => s.pay), (s) => s.r.amount)
+  const subsToCharge = subRows.filter((s) => s.state === 'overdue' || s.state === 'today').length
 
   const inMonth = useMemo(
     () => sales.rows.filter((s) => monthOf(s.sale_date) === month).sort((a, b) => b.sale_date.localeCompare(a.sale_date)),
@@ -53,7 +62,13 @@ export default function Sales() {
       </PageHeader>
 
       <motion.div className="kpis kpis-5" variants={stagger} initial="hidden" animate="show" key={month}>
-        <Kpi label="Mensalidades" value={brl(mrr)} hint={`${subs.length} cliente(s) recorrente(s) por mês`} icon={<Repeat size={18} />} />
+        <Kpi
+          label="Mensalidades"
+          value={brl(mrr)}
+          hint={`${brl(subsPaid)} recebido · ${subsToCharge} a cobrar`}
+          tone={subRows.some((s) => s.state === 'overdue') ? 'danger' : subsToCharge > 0 ? 'warn' : undefined}
+          icon={<Repeat size={18} />}
+        />
         <Kpi label="Recebido" value={brl(revenue)} hint={`${paid.length} venda(s) paga(s)`} icon={<CircleDollarSign size={18} />} />
         <Kpi label="A receber" value={brl(sum(pending, (s) => s.amount))} hint={`${pending.length} pendente(s)`} icon={<Clock size={18} />} />
         <Kpi label="Gasto nas vendas" value={brl(costs)} hint="Custos das vendas pagas" icon={<Wallet size={18} />} />
@@ -157,7 +172,7 @@ export default function Sales() {
         <div className="panel-head">
           <div>
             <h2>Mensalidades (vendas recorrentes)</h2>
-            <p className="muted small">Entram sozinhas nos ganhos de cada mês na Gestão financeira.</p>
+            <p className="muted small">Marque quem já pagou neste mês. As vencidas sem pagamento viram cobrança no Dashboard.</p>
           </div>
           <Button onClick={() => recModal.show(null)}>
             <Plus size={16} aria-hidden /> Nova mensalidade
@@ -168,7 +183,7 @@ export default function Sales() {
         ) : (
           <ul className="rows">
             <AnimatePresence initial={false}>
-              {subs.map((r) => (
+              {subRows.map(({ r, date, pay, state }) => (
                 <motion.li
                   key={r.id}
                   layout="position"
@@ -181,11 +196,28 @@ export default function Sales() {
                   <div className="row-main">
                     <strong>{r.client}</strong>
                     <span className="muted small">
-                      {r.description || 'Mensalidade'} · todo dia {r.day}
+                      {r.description || 'Mensalidade'} · vence {fmtDate(date)}
+                      {pay && ` · paga em ${fmtDate(pay.paid_at)}`}
                     </span>
                   </div>
-                  <strong className="row-amount num">{brl(r.amount)} / mês</strong>
+                  <strong className="num">{brl(r.amount)} / mês</strong>
+                  {state === 'paid' ? (
+                    <span className="badge badge-paga">Paga</span>
+                  ) : state === 'ok' ? (
+                    <span className="badge badge-pendente">A receber</span>
+                  ) : (
+                    <span className={`due-chip due-${state}`}>{state === 'overdue' ? 'Atrasada · cobrar' : 'Vence hoje'}</span>
+                  )}
                   <div className="row-actions">
+                    {pay ? (
+                      <Button size="sm" onClick={() => payments.remove(pay.id)}>
+                        <RotateCcw size={14} aria-hidden /> Desfazer
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="primary" onClick={() => payments.add({ recurring_id: r.id, month, paid_at: today })}>
+                        <Check size={15} aria-hidden /> Marcar paga
+                      </Button>
+                    )}
                     <Button variant="ghost" size="icon" aria-label={`Editar mensalidade de ${r.client}`} onClick={() => recModal.show(r)}>
                       <Pencil size={15} aria-hidden />
                     </Button>

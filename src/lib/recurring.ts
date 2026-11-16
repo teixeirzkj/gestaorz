@@ -1,5 +1,5 @@
-import { currentMonth, monthOf } from './format'
-import type { Recurring, Tx } from './types'
+import { currentMonth, monthOf, shiftMonth } from './format'
+import type { RecPayment, Recurring, Tx } from './types'
 
 export const activeIn = (r: Recurring, ym: string) => r.start_month <= ym && (!r.end_month || ym <= r.end_month)
 
@@ -25,6 +25,29 @@ export const monthTxs = (txs: Tx[], recs: Recurring[], ym: string): Tx[] => [
   ...txs.filter((t) => monthOf(t.date) === ym),
   ...recs.filter((r) => activeIn(r, ym)).map((r) => occurrence(r, ym)),
 ]
+
+export interface Charge {
+  rec: Recurring
+  month: string
+  date: string
+}
+
+/** Mensalidades de clientes já vencidas (até hoje) e ainda não marcadas como pagas. */
+export const pendingCharges = (recs: Recurring[], payments: RecPayment[], today: string): Charge[] => {
+  const paid = new Set(payments.map((p) => p.recurring_id + ':' + p.month))
+  const now = today.slice(0, 7)
+  const out: Charge[] = []
+  for (const rec of recs) {
+    if (!rec.client || rec.kind !== 'receita') continue
+    let ym = now
+    for (let i = 0; i < 24 && ym >= rec.start_month; i++, ym = shiftMonth(ym, -1)) {
+      if (!activeIn(rec, ym) || paid.has(rec.id + ':' + ym)) continue
+      const date = occurrence(rec, ym).date
+      if (date <= today) out.push({ rec, month: ym, date })
+    }
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date))
+}
 
 const countMonths = (from: string, to: string) => {
   const [ya, ma] = from.split('-').map(Number)

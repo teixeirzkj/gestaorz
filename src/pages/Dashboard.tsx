@@ -1,15 +1,15 @@
 import { motion, useReducedMotion } from 'framer-motion'
-import { AlarmClock, CalendarDays, CircleDollarSign, Clock, Scale, TrendingUp } from 'lucide-react'
+import { AlarmClock, CalendarDays, Check, CircleDollarSign, Clock, Scale, TrendingUp } from 'lucide-react'
 import { useMemo } from 'react'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { C, ChartLegend, ChartTip, axisProps } from '../components/charts'
-import { Empty, Kpi, PageHeader, rise, stagger } from '../components/ui'
+import { Button, Empty, Kpi, PageHeader, rise, stagger } from '../components/ui'
 import { useData } from '../lib/data'
-import { monthTxs, totalReserva } from '../lib/recurring'
+import { monthTxs, pendingCharges, totalReserva } from '../lib/recurring'
 import { brl, brlShort, currentMonth, dueState, fmtDate, lastMonths, monthLabel, monthOf, sum, todayStr } from '../lib/format'
 
 export default function Dashboard() {
-  const { columns, cards, sales, txs, recurring } = useData()
+  const { columns, cards, sales, txs, recurring, payments } = useData()
   const reduce = useReducedMotion()
   const month = currentMonth()
   const today = todayStr()
@@ -74,6 +74,7 @@ export default function Dashboard() {
   const overdue = open.filter((c) => dueState(c.due_date, today) === 'overdue').length
   const dueToday = open.filter((c) => dueState(c.due_date, today) === 'today').length
   const upcoming = [...open].sort((a, b) => a.due_date!.localeCompare(b.due_date!)).slice(0, 6)
+  const charges = useMemo(() => pendingCharges(recurring.rows, payments.rows, today), [recurring.rows, payments.rows, today])
   const colName = (id: string) => columns.rows.find((c) => c.id === id)?.title ?? ''
 
   return (
@@ -205,6 +206,39 @@ export default function Dashboard() {
           </div>
         </motion.div>
       </motion.div>
+
+      {charges.length > 0 && (
+        <div className="panel panel-alert">
+          <div className="panel-head">
+            <h2>Cobranças em aberto</h2>
+            <span className="muted small">
+              {charges.length} mensalidade(s) · {brl(sum(charges, (c) => c.rec.amount))}
+            </span>
+          </div>
+          <ul className="rows">
+            {charges.map((c) => (
+              <li key={c.rec.id + c.month} className="row">
+                <div className="row-main">
+                  <strong>{c.rec.client}</strong>
+                  <span className="muted small">
+                    {c.rec.description || 'Mensalidade'} · {monthLabel(c.month).toLowerCase()}
+                  </span>
+                </div>
+                <strong className="num">{brl(c.rec.amount)}</strong>
+                <span className={c.date < today ? 'due-chip due-overdue' : 'due-chip due-today'}>
+                  <CalendarDays size={13} aria-hidden />
+                  {fmtDate(c.date)} · {c.date < today ? 'Atrasada' : 'Vence hoje'}
+                </span>
+                <div className="row-actions">
+                  <Button size="sm" variant="primary" onClick={() => payments.add({ recurring_id: c.rec.id, month: c.month, paid_at: today })}>
+                    <Check size={15} aria-hidden /> Marcar paga
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="panel">
         <div className="panel-head">
