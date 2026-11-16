@@ -1,45 +1,50 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { ArrowDownRight, ArrowUpRight, Pencil, PiggyBank, Plus, Scale, Trash2 } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, Pencil, PiggyBank, Plus, Repeat, Scale, Trash2 } from 'lucide-react'
 import { useMemo, useState, type FormEvent } from 'react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { ChartLegend, ChartTip, axisProps, C } from '../components/charts'
+import { KIND_LABEL, RecForm } from '../components/RecForm'
 import { Button, Empty, Field, Kpi, Modal, MonthNav, PageHeader, ease, stagger, useModal } from '../components/ui'
 import { useData } from '../lib/data'
 import { brl, brlShort, currentMonth, fmtDate, lastMonths, monthLabel, monthOf, parseMoney, sum, todayStr } from '../lib/format'
-import type { Tx, TxKind } from '../lib/types'
+import { monthTxs, totalReserva } from '../lib/recurring'
+import type { Recurring, Tx, TxKind } from '../lib/types'
 
-const KIND_LABEL: Record<TxKind, string> = { receita: 'Ganho', despesa: 'Gasto', reserva: 'Reserva' }
 const CATEGORIES: Record<TxKind, string[]> = {
-  receita: ['Salário', 'Vendas', 'Freelance', 'Comissão', 'Outros'],
+  receita: ['Salário', 'Vendas', 'Mensalidade', 'Freelance', 'Comissão', 'Outros'],
   despesa: ['Moradia', 'Alimentação', 'Transporte', 'Ferramentas', 'Marketing', 'Impostos', 'Lazer', 'Outros'],
   reserva: ['Reserva de emergência', 'Investimento', 'Objetivo'],
 }
 
+const of = (rows: Tx[], kind: TxKind) => sum(rows.filter((t) => t.kind === kind), (t) => t.amount)
+
 export default function Finance() {
-  const { txs } = useData()
+  const { txs, recurring } = useData()
   const reduce = useReducedMotion()
   const [month, setMonth] = useState(currentMonth)
   const modal = useModal<{ tx: Tx | null; kind: TxKind }>()
+  const recModal = useModal<Recurring>()
+  const today = todayStr()
 
   const inMonth = useMemo(
-    () => txs.rows.filter((t) => monthOf(t.date) === month).sort((a, b) => b.date.localeCompare(a.date)),
-    [txs.rows, month],
+    () => monthTxs(txs.rows, recurring.rows, month).sort((a, b) => b.date.localeCompare(a.date)),
+    [txs.rows, recurring.rows, month],
   )
-  const of = (rows: Tx[], kind: TxKind) => sum(rows.filter((t) => t.kind === kind), (t) => t.amount)
   const income = of(inMonth, 'receita')
   const expense = of(inMonth, 'despesa')
   const saved = of(inMonth, 'reserva')
   const left = income - expense - saved
-  const totalSaved = of(txs.rows, 'reserva')
+  const totalSaved = useMemo(() => totalReserva(txs.rows, recurring.rows), [txs.rows, recurring.rows])
+  const fixedIncome = sum(inMonth.filter((t) => t.recurring && t.kind === 'receita'), (t) => t.amount)
+  const fixedExpense = sum(inMonth.filter((t) => t.recurring && t.kind === 'despesa'), (t) => t.amount)
 
   const history = useMemo(
     () =>
       lastMonths(6, month).map((ym) => {
-        const rows = txs.rows.filter((t) => monthOf(t.date) === ym)
+        const rows = monthTxs(txs.rows, recurring.rows, ym)
         return { name: monthLabel(ym, true), Ganhos: of(rows, 'receita'), Gastos: of(rows, 'despesa') }
       }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [txs.rows, month],
+    [txs.rows, recurring.rows, month],
   )
 
   const byCategory = useMemo(() => {
@@ -64,11 +69,11 @@ export default function Finance() {
       </PageHeader>
 
       <motion.div className="kpis" variants={stagger} initial="hidden" animate="show" key={month}>
-        <Kpi label="Ganhos do mês" value={brl(income)} icon={<ArrowUpRight size={18} />} />
+        <Kpi label="Ganhos do mês" value={brl(income)} hint={`${brl(fixedIncome)} são fixos`} icon={<ArrowUpRight size={18} />} />
         <Kpi
           label="Gastos do mês"
           value={brl(expense)}
-          hint={income > 0 ? `${Math.round((expense / income) * 100)}% dos ganhos` : undefined}
+          hint={income > 0 ? `${Math.round((expense / income) * 100)}% dos ganhos · ${brl(fixedExpense)} fixos` : `${brl(fixedExpense)} são fixos`}
           icon={<ArrowDownRight size={18} />}
         />
         <Kpi label="Guardado na reserva" value={brl(saved)} hint={`Total acumulado: ${brl(totalSaved)}`} icon={<PiggyBank size={18} />} />
@@ -135,6 +140,9 @@ export default function Finance() {
       <div className="panel">
         <div className="panel-head">
           <h2>Lançamentos de {monthLabel(month).toLowerCase()}</h2>
+          <span className="muted small">
+            <Repeat size={13} aria-hidden style={{ verticalAlign: '-2px' }} /> Fixo = repete todo mês
+          </span>
         </div>
         {inMonth.length === 0 ? (
           <Empty>Nenhum lançamento neste mês. Comece cadastrando um ganho.</Empty>
@@ -155,22 +163,35 @@ export default function Finance() {
                     <strong>{t.description || t.category}</strong>
                     <span className="muted small">
                       {fmtDate(t.date)} · {t.category}
+                      {t.recurring && ` · Fixo, todo dia ${t.recurring.day}`}
+                      {t.recurring && t.date > today && ' · previsto'}
                     </span>
                   </div>
-                  <span className={`badge badge-${t.kind}`}>{KIND_LABEL[t.kind]}</span>
+                  <span className={`badge badge-${t.kind}`}>
+                    {t.recurring && <Repeat size={12} aria-hidden style={{ marginRight: 5 }} />}
+                    {KIND_LABEL[t.kind]}
+                  </span>
                   <strong className="row-amount num">
                     {t.kind === 'receita' ? '+ ' : '− '}
                     {brl(t.amount)}
                   </strong>
                   <div className="row-actions">
-                    <Button variant="ghost" size="icon" aria-label="Editar lançamento" onClick={() => modal.show({ tx: t, kind: t.kind })}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Editar lançamento"
+                      onClick={() => (t.recurring ? recModal.show(t.recurring) : modal.show({ tx: t, kind: t.kind }))}
+                    >
                       <Pencil size={15} aria-hidden />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       aria-label="Excluir lançamento"
-                      onClick={() => confirm('Excluir este lançamento?') && txs.remove(t.id)}
+                      onClick={() => {
+                        if (t.recurring) recModal.show(t.recurring)
+                        else if (confirm('Excluir este lançamento?')) txs.remove(t.id)
+                      }}
                     >
                       <Trash2 size={15} aria-hidden />
                     </Button>
@@ -185,18 +206,25 @@ export default function Finance() {
       <Modal open={modal.open} onClose={modal.hide} title={modal.data?.tx ? 'Editar lançamento' : 'Novo lançamento'}>
         {modal.data && <TxForm key={modal.nonce} tx={modal.data.tx} kind={modal.data.kind} month={month} onClose={modal.hide} />}
       </Modal>
+
+      <Modal open={recModal.open} onClose={recModal.hide} title="Lançamento fixo">
+        {recModal.data && (
+          <RecForm key={recModal.nonce} rec={recModal.data} clientMode={!!recModal.data.client} month={month} onClose={recModal.hide} />
+        )}
+      </Modal>
     </>
   )
 }
 
 function TxForm({ tx, kind: initialKind, month, onClose }: { tx: Tx | null; kind: TxKind; month: string; onClose: () => void }) {
-  const { txs } = useData()
+  const { txs, recurring } = useData()
   const today = todayStr()
   const [kind, setKind] = useState<TxKind>(initialKind)
   const [category, setCategory] = useState(tx?.category ?? CATEGORIES[initialKind][0])
   const [description, setDescription] = useState(tx?.description ?? '')
   const [amount, setAmount] = useState(tx ? String(tx.amount).replace('.', ',') : '')
   const [date, setDate] = useState(tx?.date ?? (monthOf(today) === month ? today : `${month}-01`))
+  const [repeat, setRepeat] = useState(false)
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -206,10 +234,11 @@ function TxForm({ tx, kind: initialKind, month, onClose }: { tx: Tx | null; kind
       category: category.trim() || 'Outros',
       description: description.trim(),
       amount: parseMoney(amount),
-      date,
     }
-    if (tx) txs.update(tx.id, data)
-    else txs.add(data)
+    if (tx) txs.update(tx.id, { ...data, date })
+    else if (repeat)
+      recurring.add({ ...data, client: '', day: Number(date.slice(8, 10)), start_month: monthOf(date), end_month: null })
+    else txs.add({ ...data, date })
     onClose()
   }
 
@@ -251,6 +280,12 @@ function TxForm({ tx, kind: initialKind, month, onClose }: { tx: Tx | null; kind
       <Field label="Descrição">
         <input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={200} placeholder="Ex.: Aluguel, salário, assinatura…" />
       </Field>
+      {!tx && (
+        <label className="check check-block">
+          <input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} />
+          <span>Fixo: repetir todo mês no dia {date ? Number(date.slice(8, 10)) : '—'}</span>
+        </label>
+      )}
       <div className="form-actions">
         <Button onClick={onClose}>Cancelar</Button>
         <Button type="submit" variant="primary">

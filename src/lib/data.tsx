@@ -1,9 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { supabase } from './supabase'
 import { toast } from '../components/ui'
-import type { Card, Column, Sale, Tx } from './types'
+import type { Card, Column, Recurring, Sale, Tx } from './types'
 
-type Table = 'board_columns' | 'cards' | 'sales' | 'transactions'
+type Table = 'board_columns' | 'cards' | 'sales' | 'transactions' | 'recurring'
 type Row = { id: string; created_at: string }
 
 const LS = 'gfrz:'
@@ -121,6 +121,7 @@ interface Ctx {
   cards: TableApi<Card>
   sales: TableApi<Sale>
   txs: TableApi<Tx>
+  recurring: TableApi<Recurring>
 }
 
 const DataCtx = createContext<Ctx | null>(null)
@@ -134,17 +135,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [cards, setCards] = useTable<Card>('cards', reload)
   const [sales, setSales] = useTable<Sale>('sales', reload)
   const [txs, setTxs] = useTable<Tx>('transactions', reload)
+  const [recurring, setRecurring] = useTable<Recurring>('recurring', reload)
 
   useEffect(() => {
     let alive = true
     ;(async () => {
       try {
-        const [c, k, s, t] = await Promise.all([
+        const [c, k, s, t, r] = await Promise.all([
           backend.list<Column>('board_columns'),
           backend.list<Card>('cards'),
           backend.list<Sale>('sales'),
           backend.list<Tx>('transactions'),
+          backend.list<Recurring>('recurring').catch(() => {
+            toast('Para usar lançamentos fixos, execute supabase/002_recorrentes.sql no Supabase.')
+            return [] as Recurring[]
+          }),
         ])
+        if (alive) setRecurring(r)
         const cols = c.length ? c : await seedColumns()
         if (!alive) return
         setColumns(cols)
@@ -160,9 +167,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return () => {
       alive = false
     }
-  }, [tick, setColumns, setCards, setSales, setTxs])
+  }, [tick, setColumns, setCards, setSales, setTxs, setRecurring])
 
-  const value = useMemo(() => ({ loading, columns, cards, sales, txs }), [loading, columns, cards, sales, txs])
+  const value = useMemo(
+    () => ({ loading, columns, cards, sales, txs, recurring }),
+    [loading, columns, cards, sales, txs, recurring],
+  )
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>
 }
 

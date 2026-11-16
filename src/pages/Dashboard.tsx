@@ -5,10 +5,11 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, Res
 import { C, ChartLegend, ChartTip, axisProps } from '../components/charts'
 import { Empty, Kpi, PageHeader, rise, stagger } from '../components/ui'
 import { useData } from '../lib/data'
+import { monthTxs, totalReserva } from '../lib/recurring'
 import { brl, brlShort, currentMonth, dueState, fmtDate, lastMonths, monthLabel, monthOf, sum, todayStr } from '../lib/format'
 
 export default function Dashboard() {
-  const { columns, cards, sales, txs } = useData()
+  const { columns, cards, sales, txs, recurring } = useData()
   const reduce = useReducedMotion()
   const month = currentMonth()
   const today = todayStr()
@@ -17,7 +18,7 @@ export default function Dashboard() {
     const monthSales = sales.rows.filter((s) => monthOf(s.sale_date) === month)
     const paid = monthSales.filter((s) => s.status === 'paga')
     const pending = sales.rows.filter((s) => s.status === 'pendente')
-    const monthTx = txs.rows.filter((t) => monthOf(t.date) === month)
+    const monthTx = monthTxs(txs.rows, recurring.rows, month)
     const of = (k: string) => sum(monthTx.filter((t) => t.kind === k), (t) => t.amount)
     const revenue = sum(paid, (s) => s.amount)
     const cost = sum(paid, (s) => s.cost)
@@ -28,9 +29,9 @@ export default function Dashboard() {
       receivable: sum(pending, (s) => s.amount),
       pendingCount: pending.length,
       left: of('receita') - of('despesa') - of('reserva'),
-      saved: sum(txs.rows.filter((t) => t.kind === 'reserva'), (t) => t.amount),
+      saved: totalReserva(txs.rows, recurring.rows),
     }
-  }, [sales.rows, txs.rows, month])
+  }, [sales.rows, txs.rows, recurring.rows, month])
 
   const months = useMemo(() => lastMonths(6), [])
 
@@ -48,11 +49,11 @@ export default function Dashboard() {
   const financeHistory = useMemo(
     () =>
       months.map((ym) => {
-        const rows = txs.rows.filter((t) => monthOf(t.date) === ym)
+        const rows = monthTxs(txs.rows, recurring.rows, ym)
         const of = (k: string) => sum(rows.filter((t) => t.kind === k), (t) => t.amount)
         return { name: monthLabel(ym, true), Ganhos: of('receita'), Gastos: of('despesa') }
       }),
-    [txs.rows, months],
+    [txs.rows, recurring.rows, months],
   )
 
   const statusData = useMemo(() => {

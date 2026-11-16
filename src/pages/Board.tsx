@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowDown, ArrowUp, CalendarDays, Plus, Settings2, Trash2 } from 'lucide-react'
-import { useMemo, useState, type FormEvent } from 'react'
+import { useMemo, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { Button, Field, Modal, PageHeader, ease, useModal } from '../components/ui'
 import { useData } from '../lib/data'
 import { brl, dueState, fmtDate, parseMoney, todayStr } from '../lib/format'
@@ -15,6 +15,28 @@ export default function Board() {
   const [dragId, setDragId] = useState<string | null>(null)
   const [overCol, setOverCol] = useState<string | null>(null)
   const today = todayStr()
+
+  // Clicar e segurar numa área vazia do quadro para arrastá-lo para os lados.
+  const boardRef = useRef<HTMLDivElement>(null)
+  const [panning, setPanning] = useState(false)
+  const startPan = (e: ReactMouseEvent) => {
+    const el = boardRef.current
+    if (!el || e.button !== 0 || (e.target as HTMLElement).closest('.card, button, input')) return
+    e.preventDefault()
+    const x0 = e.clientX
+    const s0 = el.scrollLeft
+    setPanning(true)
+    const move = (ev: MouseEvent) => {
+      el.scrollLeft = s0 - (ev.clientX - x0)
+    }
+    const up = () => {
+      setPanning(false)
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+    }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+  }
 
   const cols = useMemo(() => [...columns.rows].sort((a, b) => a.position - b.position), [columns.rows])
   const byCol = useMemo(() => {
@@ -52,7 +74,7 @@ export default function Board() {
         </Button>
       </PageHeader>
 
-      <div className="board">
+      <div ref={boardRef} className={`board ${panning ? 'panning' : ''}`} onMouseDown={startPan}>
         {cols.map((col) => {
           const list = byCol.get(col.id) ?? []
           return (

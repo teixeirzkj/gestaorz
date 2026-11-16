@@ -1,10 +1,12 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { Check, CircleDollarSign, Clock, Pencil, Plus, RotateCcw, Trash2, TrendingUp, Wallet, X } from 'lucide-react'
+import { Check, CircleDollarSign, Clock, Pencil, Plus, Repeat, RotateCcw, Trash2, TrendingUp, Wallet, X } from 'lucide-react'
 import { useMemo, useState, type FormEvent } from 'react'
+import { RecForm } from '../components/RecForm'
 import { Button, Empty, Field, Kpi, Modal, MonthNav, PageHeader, ease, stagger, useModal } from '../components/ui'
 import { useData } from '../lib/data'
-import { brl, currentMonth, fmtDate, monthOf, parseMoney, sum, todayStr } from '../lib/format'
-import type { Sale, SaleStatus } from '../lib/types'
+import { brl, currentMonth, fmtDate, monthOf, parseMoney, shiftMonth, sum, todayStr } from '../lib/format'
+import { activeIn } from '../lib/recurring'
+import type { Recurring, Sale, SaleStatus } from '../lib/types'
 
 const STATUS_LABEL: Record<SaleStatus, string> = { pendente: 'Pendente', paga: 'Paga', perdida: 'Perdida' }
 const FILTERS: { id: SaleStatus | 'todas'; label: string }[] = [
@@ -15,10 +17,17 @@ const FILTERS: { id: SaleStatus | 'todas'; label: string }[] = [
 ]
 
 export default function Sales() {
-  const { sales } = useData()
+  const { sales, recurring } = useData()
   const [month, setMonth] = useState(currentMonth)
   const [filter, setFilter] = useState<SaleStatus | 'todas'>('todas')
   const modal = useModal<Sale | null>()
+  const recModal = useModal<Recurring | null>()
+
+  const subs = useMemo(
+    () => recurring.rows.filter((r) => r.client && r.kind === 'receita' && activeIn(r, month)).sort((a, b) => b.amount - a.amount),
+    [recurring.rows, month],
+  )
+  const mrr = sum(subs, (r) => r.amount)
 
   const inMonth = useMemo(
     () => sales.rows.filter((s) => monthOf(s.sale_date) === month).sort((a, b) => b.sale_date.localeCompare(a.sale_date)),
@@ -43,7 +52,8 @@ export default function Sales() {
         </Button>
       </PageHeader>
 
-      <motion.div className="kpis" variants={stagger} initial="hidden" animate="show" key={month}>
+      <motion.div className="kpis kpis-5" variants={stagger} initial="hidden" animate="show" key={month}>
+        <Kpi label="Mensalidades" value={brl(mrr)} hint={`${subs.length} cliente(s) recorrente(s) por mês`} icon={<Repeat size={18} />} />
         <Kpi label="Recebido" value={brl(revenue)} hint={`${paid.length} venda(s) paga(s)`} icon={<CircleDollarSign size={18} />} />
         <Kpi label="A receber" value={brl(sum(pending, (s) => s.amount))} hint={`${pending.length} pendente(s)`} icon={<Clock size={18} />} />
         <Kpi label="Gasto nas vendas" value={brl(costs)} hint="Custos das vendas pagas" icon={<Wallet size={18} />} />
@@ -143,15 +153,65 @@ export default function Sales() {
         )}
       </div>
 
+      <div className="panel">
+        <div className="panel-head">
+          <div>
+            <h2>Mensalidades (vendas recorrentes)</h2>
+            <p className="muted small">Entram sozinhas nos ganhos de cada mês na Gestão financeira.</p>
+          </div>
+          <Button onClick={() => recModal.show(null)}>
+            <Plus size={16} aria-hidden /> Nova mensalidade
+          </Button>
+        </div>
+        {subs.length === 0 ? (
+          <Empty>Nenhuma mensalidade ativa neste mês.</Empty>
+        ) : (
+          <ul className="rows">
+            <AnimatePresence initial={false}>
+              {subs.map((r) => (
+                <motion.li
+                  key={r.id}
+                  layout="position"
+                  className="row"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.25, ease }}
+                >
+                  <div className="row-main">
+                    <strong>{r.client}</strong>
+                    <span className="muted small">
+                      {r.description || 'Mensalidade'} · todo dia {r.day}
+                    </span>
+                  </div>
+                  <strong className="row-amount num">{brl(r.amount)} / mês</strong>
+                  <div className="row-actions">
+                    <Button variant="ghost" size="icon" aria-label={`Editar mensalidade de ${r.client}`} onClick={() => recModal.show(r)}>
+                      <Pencil size={15} aria-hidden />
+                    </Button>
+                  </div>
+                </motion.li>
+              ))}
+            </AnimatePresence>
+          </ul>
+        )}
+      </div>
+
       <Modal open={modal.open} onClose={modal.hide} title={modal.data ? 'Editar venda' : 'Nova venda'}>
         <SaleForm key={modal.nonce} sale={modal.data} month={month} onClose={modal.hide} />
+      </Modal>
+
+      <Modal open={recModal.open} onClose={recModal.hide} title={recModal.data ? 'Editar mensalidade' : 'Nova mensalidade'}>
+        <RecForm key={recModal.nonce} rec={recModal.data} clientMode month={month} onClose={recModal.hide} />
       </Modal>
     </>
   )
 }
 
 function SaleForm({ sale, month, onClose }: { sale: Sale | null; month: string; onClose: () => void }) {
-  const { sales } = useData()
+  const { sales, recurring } = useData()
+  const [monthly, setMonthly] = useState('')
+  const [day, setDay] = useState('20')
   const today = todayStr()
   const [client, setClient] = useState(sale?.client ?? '')
   const [description, setDescription] = useState(sale?.description ?? '')
@@ -173,7 +233,25 @@ function SaleForm({ sale, month, onClose }: { sale: Sale | null; month: string; 
       paid_at: status === 'paga' ? (sale?.paid_at ?? today) : null,
     }
     if (sale) sales.update(sale.id, data)
-    else sales.add(data)
+    else {
+      sales.add(data)
+      const fee = parseMoney(monthly)
+      if (fee > 0) {
+        const d = Math.min(31, Math.max(1, Math.round(Number(day)) || 20))
+        // primeira mensalidade: neste mês se o dia ainda não passou na data da venda, senão no próximo
+        const start = d >= Number(date.slice(8, 10)) ? monthOf(date) : shiftMonth(monthOf(date), 1)
+        recurring.add({
+          kind: 'receita',
+          category: 'Mensalidade',
+          description: data.description,
+          client: data.client,
+          amount: fee,
+          day: d,
+          start_month: start,
+          end_month: null,
+        })
+      }
+    }
     onClose()
   }
 
@@ -186,13 +264,23 @@ function SaleForm({ sale, month, onClose }: { sale: Sale | null; month: string; 
         <input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={200} placeholder="O que foi vendido" />
       </Field>
       <div className="form-row">
-        <Field label="Valor da venda">
+        <Field label="Valor da venda / implantação">
           <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} required placeholder="0,00" />
         </Field>
         <Field label="Custo / gasto" hint="Quanto você gastou para entregar">
           <input inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value)} placeholder="0,00" />
         </Field>
       </div>
+      {!sale && (
+        <div className="form-row">
+          <Field label="Mensalidade (opcional)" hint="Venda recorrente: entra nos ganhos todo mês">
+            <input inputMode="decimal" value={monthly} onChange={(e) => setMonthly(e.target.value)} placeholder="0,00" />
+          </Field>
+          <Field label="Dia do recebimento">
+            <input type="number" min={1} max={31} value={day} onChange={(e) => setDay(e.target.value)} />
+          </Field>
+        </div>
+      )}
       <div className="form-row">
         <Field label="Data">
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />

@@ -653,6 +653,16 @@ textarea {
   overflow-x: auto;
   padding-bottom: 12px;
   scrollbar-color: var(--border-strong) transparent;
+  min-height: calc(100dvh - 170px);
+  cursor: grab;
+}
+.board.panning {
+  cursor: grabbing;
+  user-select: none;
+}
+.check-block {
+  padding: 4px 0;
+  font-size: 13.5px;
 }
 .column {
   flex: 0 0 286px;

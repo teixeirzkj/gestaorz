@@ -41,4 +41,21 @@ export interface Tx {
   amount: number
   date: string
   created_at: string
+  /** Preenchido quando o lançamento vem de um fixo mensal (não existe no banco). */
+  recurring?: Recurring
+}
+
+/** Lançamento fixo que se repete todo mês (salário, parcela, mensalidade de cliente). */
+export interface Recurring {
+  id: string
+  kind: TxKind
+  category: string
+  description: string
+  /** Preenchido quando é mensalidade de um cliente (aparece em Vendas). */
+  client: string
+  amount: number
+  day: number
+  start_month: string
+  end_month: string | null
+  created_at: string
 }
